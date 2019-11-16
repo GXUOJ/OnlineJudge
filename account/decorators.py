@@ -7,7 +7,7 @@ from contest.models import Contest, ContestType, ContestStatus, ContestRuleType
 from utils.api import JSONResponse, APIError
 from utils.constants import CONTEST_PASSWORD_SESSION_KEY
 from .models import ProblemPermission
-
+import re
 
 class BasePermissionDecorator(object):
     def __init__(self, func):
@@ -121,6 +121,15 @@ def check_contest_permission(check_type="details"):
                 # password error
                 if not check_contest_password(request.session.get(CONTEST_PASSWORD_SESSION_KEY, {}).get(self.contest.id), self.contest.password):
                     return self.error("Wrong password or password expired")
+                        # username limited
+
+            limit_search = re.search(r"limit:[\s]*#.*?#", self.contest.description)
+            if limit_search is not None:
+                limit_str = limit_search.group()
+                limit_str = limit_str[limit_str.index("#")+1:-1]
+                match_result = re.match(limit_str, user.username)
+                if match_result is None or (match_result is not None and match_result.group() is not user.username):
+                    return self.error(f"Username not match {limit_str}")
 
             # regular user get contest problems, ranks etc. before contest started
             if self.contest.status == ContestStatus.CONTEST_NOT_START and check_type != "details":

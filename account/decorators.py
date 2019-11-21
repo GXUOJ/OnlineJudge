@@ -121,8 +121,8 @@ def check_contest_permission(check_type="details"):
                 # password error
                 if not check_contest_password(request.session.get(CONTEST_PASSWORD_SESSION_KEY, {}).get(self.contest.id), self.contest.password):
                     return self.error("Wrong password or password expired")
-                        # username limited
-
+            
+            # username limited
             limit_search = re.search(r"limit:[\s]*#.*?#", self.contest.description)
             if limit_search is not None:
                 limit_str = limit_search.group()

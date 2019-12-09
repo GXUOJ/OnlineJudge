@@ -8,10 +8,10 @@ from django.http import FileResponse
 
 from account.decorators import check_contest_permission, ensure_created_by
 from account.models import User
-from submission.models import Submission, JudgeStatus
+from submission.models import Submission, JudgeStatus, STATUS_T
 from utils.api import APIView, validate_serializer
 from utils.cache import cache
-from utils.constants import CacheKey
+from utils.constants import CacheKey, ContestRuleType
 from utils.shortcuts import rand_str
 from utils.tasks import delete_files
 from ..models import Contest, ContestAnnouncement, ACMContestRank
@@ -197,30 +197,50 @@ class ACMContestHelper(APIView):
 
 class DownloadContestSubmissions(APIView):
     def _dump_submissions(self, contest, exclude_admin=True):
-        problem_ids = contest.problem_set.all().values_list("id", "_id")
-        id2display_id = {k[0]: k[1] for k in problem_ids}
-        ac_map = {k[0]: False for k in problem_ids}
-        submissions = Submission.objects.filter(contest=contest, result=JudgeStatus.ACCEPTED).order_by("-create_time")
-        user_ids = submissions.values_list("user_id", flat=True)
-        users = User.objects.filter(id__in=user_ids)
-        path = f"/tmp/{rand_str()}.zip"
-        with zipfile.ZipFile(path, "w") as zip_file:
-            for user in users:
-                if user.is_admin_role() and exclude_admin:
-                    continue
-                user_ac_map = copy.deepcopy(ac_map)
-                user_submissions = submissions.filter(user_id=user.id)
-                for submission in user_submissions:
-                    problem_id = submission.problem_id
-                    if user_ac_map[problem_id]:
+        if contest.rule_type == ContestRuleType.OI and contest.real_time_rank:# export users' last submissions of each problem
+            problem_ids = contest.problem_set.all().values_list("id", "_id")
+            id2display_id = {k[0]: k[1] for k in problem_ids}
+            submissions = Submission.objects.filter(contest=contest).order_by("create_time")
+            user_ids = submissions.values_list("user_id", flat=True)
+            users = User.objects.filter(id__in=user_ids)
+            path = f"/tmp/{rand_str()}.zip"
+            with zipfile.ZipFile(path, "w") as zip_file:
+                for user in users:
+                    if user.is_admin_role() and exclude_admin:
                         continue
-                    file_name = f"{user.username}_{id2display_id[submission.problem_id]}.txt"
-                    compression = zipfile.ZIP_DEFLATED
-                    zip_file.writestr(zinfo_or_arcname=f"{file_name}",
-                                      data=submission.code,
-                                      compress_type=compression)
-                    user_ac_map[problem_id] = True
-        return path
+                    user_submissions = submissions.filter(user_id=user.id)
+                    submission_map = {str(i.problem_id):i for i in user_submissions.order_by("create_time")}
+                    for submission in submission_map.values():
+                        problem_id = submission.problem_id
+                        file_name = f"{user.username}_{id2display_id[submission.problem_id]}_{STATUS_T[submission.result]}.txt"
+                        compression = zipfile.ZIP_DEFLATED
+                        zip_file.writestr(zinfo_or_arcname=f"{file_name}",data=submission.code,compress_type=compression)
+            return path
+        else:
+            problem_ids = contest.problem_set.all().values_list("id", "_id")
+            id2display_id = {k[0]: k[1] for k in problem_ids}
+            ac_map = {k[0]: False for k in problem_ids}
+            submissions = Submission.objects.filter(contest=contest, result=JudgeStatus.ACCEPTED).order_by("-create_time")
+            user_ids = submissions.values_list("user_id", flat=True)
+            users = User.objects.filter(id__in=user_ids)
+            path = f"/tmp/{rand_str()}.zip"
+            with zipfile.ZipFile(path, "w") as zip_file:
+                for user in users:
+                    if user.is_admin_role() and exclude_admin:
+                        continue
+                    user_ac_map = copy.deepcopy(ac_map)
+                    user_submissions = submissions.filter(user_id=user.id)
+                    for submission in user_submissions:
+                        problem_id = submission.problem_id
+                        if user_ac_map[problem_id]:
+                            continue
+                        file_name = f"{user.username}_{id2display_id[submission.problem_id]}.txt"
+                        compression = zipfile.ZIP_DEFLATED
+                        zip_file.writestr(zinfo_or_arcname=f"{file_name}",
+                                        data=submission.code,
+                                        compress_type=compression)
+                        user_ac_map[problem_id] = True
+            return path
 
     def get(self, request):
         contest_id = request.GET.get("contest_id")
